@@ -1,0 +1,113 @@
+i wrote this cross platform efficient daemon
+
+use futures::stream::StreamExt;
+use if_watch::{tokio::IfWatcher, IfEvent};
+use std::collections::HashSet;
+use std::env;
+use std::process::Command;
+use std::time::Duration;
+use tokio::time::timeout;
+
+macro_rules! dprintln {
+    ($debug:expr, $($arg:tt)*) => {
+        if $debug {
+            println!($($arg)*);
+        }
+    };
+}
+
+#[tokio::main]
+async fn main() {
+    let args: Vec<String> = env::args().skip(1).collect();
+
+    let debug_flags = [
+        "-d", "-debug", "--debug", "-m", "-monitor", "--monitor"
+    ];
+    let debug: bool = 
+        args.first().map_or(false, |arg| debug_flags.contains(&arg.as_str()));
+
+    let cmd_args = if debug { &args[1..] } else { &args[..] };
+
+    let mut watcher = IfWatcher::new().expect("Failed to hook into OS network events");
+    let mut known_ips = HashSet::new();
+
+    dprintln!(debug, "Initializing... capturing current IPs.");
+
+    // Consume the "initial state" so we don't trigger the command on startup.
+    // The OS immediately sends us the current IPs. We wait a tiny fraction of a second
+    // to absorb these initial events silently.
+    loop {
+        match timeout(Duration::from_millis(100), watcher.next()).await {
+            Ok(Some(Ok(IfEvent::Up(ip)))) => {
+                known_ips.insert(ip);
+            }
+            Ok(Some(Ok(IfEvent::Down(ip)))) => {
+                known_ips.remove(&ip);
+            }
+            Err(_) => break,
+            _ => {},
+        }
+    }
+
+    dprintln!(debug, "Listening for network changes. Executing: {:?}", cmd_args);
+    dprintln!(debug, "Current IPs: {:?}", known_ips);
+
+    loop {
+        match watcher.next().await {
+            Some(Ok(event)) => {
+                let mut changed_ip = None;
+
+                match event {
+                    IfEvent::Up(ip) => {
+                        if known_ips.insert(ip) {
+                            dprintln!(debug, "[Event] IP Added: {}", ip.addr());
+                            changed_ip = Some(ip.addr().to_string());
+                        }
+                    }
+                    IfEvent::Down(ip) => {
+                        if known_ips.remove(&ip) {
+                            dprintln!(debug, "[Event] IP Removed: {}", ip.addr());
+                            changed_ip = Some(ip.addr().to_string());
+                        }
+                    }
+                }
+
+                if let Some(ip_str) = changed_ip {
+                    if cmd_args.is_empty() {
+                        println!("{}", ip_str);
+                    } else {
+                        fire_command_without_blocking_event_loop(&cmd_args, debug, &ip_str);
+                    }
+                }
+            }
+            Some(Err(e)) => eprintln!("OS watcher error: {}", e),
+            None => {
+                eprintln!("OS event stream closed unexpectedly.");
+                break;
+            }
+        }
+    }
+}
+
+fn fire_command_without_blocking_event_loop(args: &[String], debug: bool, ip: &str) {
+    let replaced_args: Vec<String> = args
+        .iter()
+        .map(|arg| arg.replace("{}", ip))
+        .collect();
+
+    let mut cmd = Command::new(&replaced_args[0]);
+    if replaced_args.len() > 1 {
+        cmd.args(&replaced_args[1..]);
+    }
+
+    // We use .spawn() instead of .output()!
+    // .spawn() forks the process in microseconds and returns immediately.
+    // If we used .output(), our daemon would freeze waiting for the command
+    // to finish, which would ruin our sub-millisecond reaction time for the next event.
+    match cmd.spawn() {
+        Ok(child) => dprintln!(debug, "  -> Triggered command (PID: {})", child.id()),
+        Err(e) => eprintln!("  -> Failed to execute command: {}", e),
+    }
+}
+
+, write a whenpathchanges that is just as efficient fast and non-wasteful towards the cpu, that will be used with the first argument to be the path, (file or dir) and the rest of arguments a program to be called when that path changes
