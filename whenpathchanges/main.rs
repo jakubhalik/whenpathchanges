@@ -1,5 +1,6 @@
 use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::env;
+use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -8,14 +9,46 @@ use tokio::time::Instant;
 
 #[tokio::main]
 async fn main() {
-
-    let args: Vec<String> = env::args().skip(1).collect();
-    if args.is_empty() {
-        eprintln!("Usage: whenpathchanges <path> [command...]");
-        std::process::exit(1);
+    let mut args = env::args().skip(1).peekable();
+    let mut paths_to_watch = Vec::new();
+    let cmd_args;
+    let mut force = false;
+    let mut paths_file = None;
+    while let Some(arg) = args.peek() {
+        if arg == "--force" {
+            force = true;
+            args.next();
+        } else if arg == "--pathsfile" {
+            args.next();
+            paths_file = Some(args.next().unwrap_or_else(|| {
+                eprintln!("Error: --pathsfile requires a file path argument");
+                std::process::exit(1);
+            }));
+        } else {
+            break;
+        }
     }
-    let target_path = &args[0];
-    let cmd_args = &args[1..];
+    let raw_args: Vec<String> = args.collect();
+    if let Some(file) = paths_file {
+        let content = fs::read_to_string(&file).unwrap_or_else(|_| {
+            eprintln!("Error: Failed to read pathsfile '{}'", file);
+            std::process::exit(1);
+        });
+        for line in content.lines() {
+            let pth = line.trim();
+            if !pth.is_empty() {
+                paths_to_watch.push(pth.to_string());
+            }
+        }
+        cmd_args = raw_args;
+    } else {
+        if raw_args.is_empty() {
+            eprintln!("Example Usage: whenpathchanges <path> [command...]");
+            std::process::exit(1);
+        }
+        paths_to_watch.push(raw_args[0].clone());
+        cmd_args = raw_args[1..].to_vec();
+    }
 
     // Bridge the synchronous OS-native watcher callback to our tokio async world
     // mpsc=multiple producer, single consumer
@@ -30,14 +63,24 @@ async fn main() {
         Config::default(),
     )
     .expect("Failed to hook into OS filesystem events");
+    for path_str in &paths_to_watch {
+        let pth = Path::new(path_str);
+        if !pth.exists() {
+            if force {
+                continue;
+            } else {
+                eprintln!("Error: Path does not exist '{}'", path_str);
+                std::process::exit(1);
+            }
+        }
+        if let Err(e) = watcher.watch(pth, RecursiveMode::Recursive) {
+            if !force {
+                eprintln!("Failed to watch path '{}': {}", path_str, e);
+                std::process::exit(1);
+            }
+        }
+    }
 
-    watcher
-        .watch(Path::new(target_path), RecursiveMode::Recursive)
-        .unwrap_or_else(|e| {
-            eprintln!("Failed to watch path '{}': {}", target_path, e);
-            std::process::exit(1);
-        })
-    ;
     // Filesystem events are incredibly noisy. Saving a file in Vim/VSCode often 
     // generates 3 to 5 separate events instantly (Temp create, Modify, Rename, Chmod).
     // To remain "non-wasteful towards the CPU", we implement a micro-throttle to 
@@ -59,13 +102,13 @@ async fn main() {
                 let changed_file = event
                     .paths
                     .first()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_else(|| target_path.to_string());
+                    .map(|pth| pth.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "Unknown".to_string());
 
                 if cmd_args.is_empty() {
                     println!("{}", changed_file);
                 } else {
-                    fire_command_without_blocking_event_loop(cmd_args, &changed_file);
+                    fire_command_without_blocking_event_loop(&cmd_args, &changed_file);
                 }
             }
             Some(Err(e)) => eprintln!("OS watcher error: {:?}", e),
