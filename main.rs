@@ -2,6 +2,7 @@ use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::env;
 use std::fs;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -50,6 +51,14 @@ async fn main() {
         cmd_args = raw_args[1..].to_vec();
     }
 
+    let mut exact_targets: Vec<PathBuf> = Vec::new();
+    for path_str in &paths_to_watch {
+        let p = Path::new(path_str);
+        let abs_path = if p.is_absolute() { 
+            p.to_path_buf() 
+        } else { env::current_dir().unwrap().join(p) };
+        exact_targets.push(abs_path);
+    }
     // Bridge the synchronous OS-native watcher callback to our tokio async world
     // mpsc=multiple producer, single consumer
     let (transmitter, mut receiver) = mpsc::unbounded_channel();
@@ -63,19 +72,25 @@ async fn main() {
         Config::default(),
     )
     .expect("Failed to hook into OS filesystem events");
-    for path_str in &paths_to_watch {
-        let pth = Path::new(path_str);
-        if !pth.exists() {
-            if force {
-                continue;
-            } else {
-                eprintln!("Error: Path does not exist '{}'", path_str);
-                std::process::exit(1);
-            }
+
+    for target in &exact_targets {
+        if !target.exists() && !force {
+            eprintln!("Error: Path does not exist {:?}", target);
+            std::process::exit(1);
         }
-        if let Err(e) = watcher.watch(pth, RecursiveMode::Recursive) {
+        let watch_target = if target.is_dir() {
+            target.clone()
+        } else if let Some(parent) = target.parent() {
+            parent.to_path_buf()
+        } else {
+            target.clone()
+        };
+        let mode = if target.is_dir() { 
+            RecursiveMode::Recursive 
+        } else { RecursiveMode::NonRecursive };
+        if let Err(e) = watcher.watch(&watch_target, mode) {
             if !force {
-                eprintln!("Failed to watch path '{}': {}", path_str, e);
+                eprintln!("Failed to watch path {:?}: {}", watch_target, e);
                 std::process::exit(1);
             }
         }
@@ -94,22 +109,41 @@ async fn main() {
                 if let EventKind::Access(_) = event.kind {
                     continue;
                 }
+                let mut matched_path = None;
+
+                for ev_path in &event.paths {
+                    let ev_abs = if ev_path.is_absolute() { 
+                        ev_path.clone() 
+                    } else { 
+                        env::current_dir().unwrap().join(ev_path) 
+                    };
+                    for target in &exact_targets {
+                        if target.is_dir() && ev_abs.starts_with(target) {
+                            matched_path = Some(ev_abs.to_string_lossy().to_string());
+                            break;
+                        } else if ev_abs == *target {
+                            matched_path = Some(ev_abs.to_string_lossy().to_string());
+                            break;
+                        }
+                    }
+                    if matched_path.is_some() { break; }
+                }
+
+                let changed_file = match matched_path {
+                    Some(p) => p,
+                    None => continue, 
+                };
                 let now = Instant::now();
                 if now.duration_since(last_trigger) < throttle_window {
                     continue; // Skip the noisy sub-events of a single action
                 }
                 last_trigger = now;
-                let changed_file = event
-                    .paths
-                    .first()
-                    .map(|pth| pth.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "Unknown".to_string());
-
                 if cmd_args.is_empty() {
                     println!("{}", changed_file);
                 } else {
                     fire_command_without_blocking_event_loop(&cmd_args, &changed_file);
                 }
+
             }
             Some(Err(e)) => eprintln!("OS watcher error: {:?}", e),
             None => {
