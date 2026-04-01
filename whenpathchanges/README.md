@@ -1,6 +1,6 @@
 # whenpathchanges
 
-### Cross-platform daemon that will in a CPU efficient way spy on the kernel fs calls and if they modify a path u choose will <do something>
+### Cross-platform daemon that will in a CPU efficient way spy on the kernel fs calls and if they modify a path u choose will in microseconds after <do something>
 
 Should file or any file/s in dir not be changed by some program without u knowing about it as quickly as possible? 
 U will know in microsecond speed that it changed, better: 
@@ -12,3 +12,6 @@ Good security usage is for example to run for ur .<shell>rc and other .<somethin
 whenpathchanges ~/.zshrc rofi -e "ur {} changed! if that was not u, act fast and don't start a new zsh shell!"
 ```
 
+```bash
+
+```
