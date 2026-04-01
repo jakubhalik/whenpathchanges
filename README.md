@@ -36,3 +36,15 @@ whenpathchanges dir rm {}
 whenpathchanges --pathsfile pathsfile rofi -e "{} changed!"
 ```
 
+U can make whenpathchanges run for a path/paths automatically on every boot, each whenpathchanges daemon will be on idle taking only about 3 MBs of RAM
+If u running on linux with systemd u can:
+
+```bash
+# have to actually be in the path of the repo
+source dev_utils.sh
+tldrify_and_install whenpathchanges
+su
+source dev_utils.sh
+systemdify '/usr/bin/whenpathchanges ~/.zshrc rofi -e "ur {} has been changed!"' when_path_zshrc 1 x
+```
+
