@@ -9,7 +9,7 @@ U will know in microsecond speed that it changed, better:
 - Good security usage is for example to run for ur .<shell>rc and other .<something>rc, that u run on either every user log in start or on every run of a new shell:
 
 ```bash
-whenpathchanges ~/.zshrc rofi -e "ur {} changed! if that was not u, act fast and don't start a new zsh shell!"
+whenpathchanges ~/.zshrc rofi -e 'ur {} changed! if that was not u, act fast and don't start a new zsh shell!'
 ```
 
 - when u use without a command arg will just print about the change to the terminal
@@ -21,7 +21,7 @@ whenpathchanges file
 - notify urself about the change with rofi (have to have rofi installed)
 
 ```bash
-whenpathchanges dir rofi -e "{} was changed just now!"
+whenpathchanges dir rofi -e '{} was changed just now!'
 ```
 
 - can take intense measures and right away remove the changed file
@@ -33,7 +33,7 @@ whenpathchanges dir rm {}
 - can run for multiple paths if provide a file with paths (each path has to be on a new line (will fail if one path does not exist unless --force))
 
 ```bash
-whenpathchanges --pathsfile pathsfile rofi -e "{} changed!"
+whenpathchanges --pathsfile pathsfile rofi -e '{} changed!'
 ```
 
 U can make whenpathchanges run for a path/paths automatically on every boot, each whenpathchanges daemon will be on idle taking only about 3 MBs of RAM
@@ -45,6 +45,6 @@ source dev_utils.sh
 tldrify_and_install whenpathchanges
 su
 source dev_utils.sh
-systemdify '/usr/bin/whenpathchanges ~/.zshrc rofi -e "ur {} has been changed!"' when_path_zshrc 1 x
+systemdify '/usr/bin/whenpathchanges ~/.zshrc rofi -e "ur {} has been changed"' when_path_zshrc 1 x
 ```
 
